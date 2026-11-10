@@ -96,20 +96,24 @@ button.primary{background:var(--accent);color:#2b1a12;font-weight:800;box-shadow
 // ниже — развилки со стрелками, внизу — сундуки своих цветов с вместимостью.
 // Ход = тап по штольне: первая вагонетка катится вниз, на каждой развилке едет по стрелке
 // и перещёлкивает её на другую сторону. Свой неполный сундук — камни внутри.
-// Чужой (или полный) сундук — гаснет фонарик, вагонетка уезжает в конец своей очереди.
+// Чужой (или полный) сундук не принимает: гаснет фонарик, вагонетка откатывается назад и снова стоит первой
+// (стрелки, которые она проехала, остаются перещёлкнутыми).
 // Победа — все сундуки полны. Поражение — погасли все фонарики.
 // Чистые функции: состояние не мутируется, applyMove возвращает новое.
 // ---------------------------------------------------------------------------
 const CFG = {
   LANTERNS: 3,        // фонариков на уровень; чужой сундук гасит один, 0 — обвал
-  WRONG_BACK: true,   // вагонетка из чужого сундука возвращается в конец своей очереди (камни не теряются)
+  WRONG_MODE: 'stay', // чужой сундук: 'stay' — вагонетка откатывается назад и встаёт обратно первой (v0.7, решение Андрея);
+                      // 'back' — уходит в конец своей очереди (как было до v0.7). Стрелки, проеханные вверх, остаются перещёлкнутыми.
   SOLVE_MAX: 400000,  // предел состояний солвера (защита от зависания)
   // --- оболочка (время абсолютное, мс; скорости — в виртуальных px) ---
   ROLL_V0: 900,       // стартовая скорость вагонетки (толчок гнома снизу), px/с
   ROLL_ACC: -800,     // замедление в горку, px/с² (отрицательное — едет вверх и теряет скорость)
   ROLL_VEND: 420,     // ниже этой скорости не замедляется (доезжает до сундука бодро), px/с
   TAP_GAP_MS: 260,    // минимальный интервал между вагонетками одной штольни
-  BACK_MS: 700,       // через сколько вагонетка из чужого сундука встаёт в конец очереди
+  STOP_PX: 26,        // вагонетка в чужой сундук упирается на столько px ниже сундука (у знака «нельзя»)
+  BACK_ACC: 1500,     // откат вниз: разгон под горку, px/с²
+  BACK_VMAX: 950,     // откат вниз: предел скорости, px/с
   FLIP_MS: 220,       // поворот стрелки (с перелётом, easeOutBack)
   SHAKE_MS: 420,      // тряска чужого сундука
   LID_MS: 260,        // крышка полного сундука закрывается
@@ -149,37 +153,37 @@ const LEVELS = [
     shafts: [ { x: 2, to: 'a', q: 'rgb' }, { x: 4, to: 'a', q: 'brr' } ],
     sw: { a: { x: 3, y: 1.1, out: ['R', 'b'], s: 0 }, b: { x: 4.2, y: 2.1, out: ['B', 'G'], s: 0 } },
     chests: { R: { x: 1.2, c: 'r', cap: 3 }, B: { x: 3.4, c: 'b', cap: 2 }, G: { x: 5.2, c: 'g', cap: 1 } } },
-  { n: 3, rows: 3, seed: 3015,
-    shafts: [ { x: 1, to: 'a', q: 'brb' }, { x: 5, to: 'b', q: 'grg' } ],
-    sw: { a: { x: 1.4, y: 1.2, out: ['R', 'c'], s: 1 }, b: { x: 4.6, y: 1.2, out: ['c', 'R2'], s: 0 }, c: { x: 3, y: 2.3, out: ['B', 'G'], s: 1 } },
+  { n: 3, rows: 3, seed: 3007,
+    shafts: [ { x: 1, to: 'a', q: 'grb' }, { x: 5, to: 'b', q: 'brg' } ],
+    sw: { a: { x: 1.4, y: 1.2, out: ['R', 'c'], s: 1 }, b: { x: 4.6, y: 1.2, out: ['c', 'R2'], s: 0 }, c: { x: 3, y: 2.3, out: ['B', 'G'], s: 0 } },
     chests: { R: { x: 0.5, c: 'r', cap: 1 }, B: { x: 2.2, c: 'b', cap: 2 }, G: { x: 3.8, c: 'g', cap: 2 }, R2: { x: 5.5, c: 'r', cap: 1 } } },
-  { n: 4, rows: 3, seed: 4188,
-    shafts: [ { x: 1.4, to: 'a', q: 'bbr' }, { x: 3, to: 'a', q: 'gbg' }, { x: 4.6, to: 'a', q: 'rb' } ],
+  { n: 4, rows: 3, seed: 4087,
+    shafts: [ { x: 1.4, to: 'a', q: 'grg' }, { x: 3, to: 'a', q: 'bbb' }, { x: 4.6, to: 'a', q: 'br' } ],
     sw: { a: { x: 3, y: 1, out: ['b', 'c'], s: 1 }, b: { x: 1.6, y: 2, out: ['R', 'B'], s: 1 }, c: { x: 4.4, y: 2, out: ['G', 'B2'], s: 0 } },
     chests: { R: { x: 0.7, c: 'r', cap: 2 }, B: { x: 2.4, c: 'b', cap: 2 }, G: { x: 3.6, c: 'g', cap: 2 }, B2: { x: 5.3, c: 'b', cap: 2 } } },
-  { n: 5, rows: 4, seed: 5296, hint: 'Новый камень — золото',
-    shafts: [ { x: 1, to: 'a', q: 'grb' }, { x: 3.4, to: 'b', q: 'bgy' }, { x: 5.4, to: 'c', q: 'yy' } ],
-    sw: { a: { x: 1.6, y: 1.2, out: ['R', 'b'], s: 1 }, b: { x: 3.2, y: 2.2, out: ['B', 'c'], s: 1 }, c: { x: 4.8, y: 3, out: ['G', 'Y'], s: 1 } },
-    chests: { R: { x: 0.6, c: 'r', cap: 1 }, B: { x: 2.3, c: 'b', cap: 2 }, G: { x: 4, c: 'g', cap: 2 }, Y: { x: 5.6, c: 'y', cap: 3 } } },
-  { n: 6, rows: 3, seed: 6016,
-    shafts: [ { x: 1, to: 'a', q: 'rry' }, { x: 3, to: 'a', q: 'yrb' }, { x: 5, to: 'c', q: 'bgb' } ],
-    sw: { a: { x: 2, y: 1.1, out: ['R', 'm'], s: 0 }, c: { x: 5, y: 1.1, out: ['m', 'G'], s: 0 }, m: { x: 3.3, y: 2.2, out: ['B', 'Y'], s: 0 } },
-    chests: { R: { x: 0.6, c: 'r', cap: 3 }, B: { x: 2.4, c: 'b', cap: 3 }, Y: { x: 4.1, c: 'y', cap: 2 }, G: { x: 5.6, c: 'g', cap: 1 } } },
-  { n: 7, rows: 4, seed: 7157,
-    shafts: [ { x: 1.6, to: 'a', q: 'brgb' }, { x: 3.6, to: 'a', q: 'ryy' }, { x: 5.6, to: 'c', q: 'ygg' } ],
-    sw: { a: { x: 2.8, y: 1.1, out: ['b', 'c'], s: 0 }, b: { x: 1.6, y: 2.4, out: ['R', 'B'], s: 0 }, c: { x: 4.4, y: 2.4, out: ['G', 'Y'], s: 1 } },
+  { n: 5, rows: 4, seed: 5112, hint: 'Новый камень — золото',
+    shafts: [ { x: 1, to: 'a', q: 'rgr' }, { x: 3.4, to: 'b', q: 'bgb' }, { x: 5.4, to: 'c', q: 'yy' } ],
+    sw: { a: { x: 1.6, y: 1.2, out: ['R', 'b'], s: 0 }, b: { x: 3.2, y: 2.2, out: ['B', 'c'], s: 0 }, c: { x: 4.8, y: 3, out: ['G', 'Y'], s: 0 } },
+    chests: { R: { x: 0.6, c: 'r', cap: 2 }, B: { x: 2.3, c: 'b', cap: 2 }, G: { x: 4, c: 'g', cap: 2 }, Y: { x: 5.6, c: 'y', cap: 2 } } },
+  { n: 6, rows: 3, seed: 6184,
+    shafts: [ { x: 1, to: 'a', q: 'yrr' }, { x: 3, to: 'a', q: 'rbb' }, { x: 5, to: 'c', q: 'gyg' } ],
+    sw: { a: { x: 2, y: 1.1, out: ['R', 'm'], s: 0 }, c: { x: 5, y: 1.1, out: ['m', 'G'], s: 1 }, m: { x: 3.3, y: 2.2, out: ['B', 'Y'], s: 1 } },
+    chests: { R: { x: 0.6, c: 'r', cap: 3 }, B: { x: 2.4, c: 'b', cap: 2 }, Y: { x: 4.1, c: 'y', cap: 2 }, G: { x: 5.6, c: 'g', cap: 2 } } },
+  { n: 7, rows: 4, seed: 7009,
+    shafts: [ { x: 1.6, to: 'a', q: 'gryg' }, { x: 3.6, to: 'a', q: 'bbr' }, { x: 5.6, to: 'c', q: 'gyy' } ],
+    sw: { a: { x: 2.8, y: 1.1, out: ['b', 'c'], s: 0 }, b: { x: 1.6, y: 2.4, out: ['R', 'B'], s: 1 }, c: { x: 4.4, y: 2.4, out: ['G', 'Y'], s: 0 } },
     chests: { R: { x: 0.7, c: 'r', cap: 2 }, B: { x: 2.4, c: 'b', cap: 2 }, G: { x: 3.6, c: 'g', cap: 3 }, Y: { x: 5.3, c: 'y', cap: 3 } } },
-  { n: 8, rows: 4, seed: 8057,
-    shafts: [ { x: 1, to: 'a', q: 'bryr' }, { x: 3, to: 'a', q: 'rbr' }, { x: 5.2, to: 'b', q: 'gbg' } ],
-    sw: { a: { x: 2, y: 1.1, out: ['R', 'b'], s: 0 }, b: { x: 3.6, y: 2.1, out: ['B', 'c'], s: 0 }, c: { x: 4.8, y: 3, out: ['G', 'Y'], s: 0 } },
-    chests: { R: { x: 0.6, c: 'r', cap: 4 }, B: { x: 2.5, c: 'b', cap: 3 }, G: { x: 4, c: 'g', cap: 2 }, Y: { x: 5.6, c: 'y', cap: 1 } } },
-  { n: 9, rows: 4, seed: 9009,
-    shafts: [ { x: 2, to: 'a', q: 'rbyy' }, { x: 4, to: 'a', q: 'yrby' }, { x: 5.8, to: 'c', q: 'gbg' } ],
-    sw: { a: { x: 3, y: 1, out: ['b', 'c'], s: 0 }, b: { x: 1.7, y: 2, out: ['R', 'd'], s: 0 }, c: { x: 4.6, y: 2, out: ['d', 'Y'], s: 1 }, d: { x: 3, y: 3, out: ['B', 'G'], s: 0 } },
-    chests: { R: { x: 0.6, c: 'r', cap: 2 }, B: { x: 2.3, c: 'b', cap: 3 }, G: { x: 3.7, c: 'g', cap: 2 }, Y: { x: 5.5, c: 'y', cap: 4 } } },
-  { n: 10, rows: 4, seed: 10313,
-    shafts: [ { x: 1, to: 'b', q: 'grbg' }, { x: 3, to: 'a', q: 'brbr' }, { x: 5, to: 'c', q: 'yygy' } ],
-    sw: { a: { x: 3, y: 1, out: ['b', 'c'], s: 1 }, b: { x: 1.6, y: 2, out: ['R', 'd'], s: 0 }, c: { x: 4.4, y: 2, out: ['d', 'Y'], s: 0 }, d: { x: 3, y: 3, out: ['B', 'G'], s: 0 } },
+  { n: 8, rows: 4, seed: 8113,
+    shafts: [ { x: 1, to: 'a', q: 'ygrb' }, { x: 3, to: 'a', q: 'rbr' }, { x: 5.2, to: 'b', q: 'byg' } ],
+    sw: { a: { x: 2, y: 1.1, out: ['R', 'b'], s: 1 }, b: { x: 3.6, y: 2.1, out: ['B', 'c'], s: 1 }, c: { x: 4.8, y: 3, out: ['G', 'Y'], s: 1 } },
+    chests: { R: { x: 0.6, c: 'r', cap: 3 }, B: { x: 2.5, c: 'b', cap: 3 }, G: { x: 4, c: 'g', cap: 2 }, Y: { x: 5.6, c: 'y', cap: 2 } } },
+  { n: 9, rows: 4, seed: 9203,
+    shafts: [ { x: 2, to: 'a', q: 'ggbg' }, { x: 4, to: 'a', q: 'bryr' }, { x: 5.8, to: 'c', q: 'yyb' } ],
+    sw: { a: { x: 3, y: 1, out: ['b', 'c'], s: 1 }, b: { x: 1.7, y: 2, out: ['R', 'd'], s: 1 }, c: { x: 4.6, y: 2, out: ['d', 'Y'], s: 0 }, d: { x: 3, y: 3, out: ['B', 'G'], s: 1 } },
+    chests: { R: { x: 0.6, c: 'r', cap: 2 }, B: { x: 2.3, c: 'b', cap: 3 }, G: { x: 3.7, c: 'g', cap: 3 }, Y: { x: 5.5, c: 'y', cap: 3 } } },
+  { n: 10, rows: 4, seed: 10029,
+    shafts: [ { x: 1, to: 'b', q: 'grgb' }, { x: 3, to: 'a', q: 'ryrg' }, { x: 5, to: 'c', q: 'byby' } ],
+    sw: { a: { x: 3, y: 1, out: ['b', 'c'], s: 0 }, b: { x: 1.6, y: 2, out: ['R', 'd'], s: 0 }, c: { x: 4.4, y: 2, out: ['d', 'Y'], s: 1 }, d: { x: 3, y: 3, out: ['B', 'G'], s: 0 } },
     chests: { R: { x: 0.6, c: 'r', cap: 3 }, B: { x: 2.3, c: 'b', cap: 3 }, G: { x: 3.7, c: 'g', cap: 3 }, Y: { x: 5.5, c: 'y', cap: 3 } } },
 ];
 
@@ -217,7 +221,7 @@ function applyMove(s, i){
   n.q[i] = s.q[i].slice(1);
   for (const id of v.path) n.bit[id] ^= 1;
   if (v.ok) n.fill[v.chest]++;
-  else { n.lan--; n.lost++; if (CFG.WRONG_BACK) n.q[i] += v.color; }
+  else { n.lan--; n.lost++; n.q[i] = CFG.WRONG_MODE === 'stay' ? s.q[i] : n.q[i] + v.color; }
   n.moves++; n.last = { shaft: i, color: v.color, path: v.path, chest: v.chest, ok: v.ok }; n.prev = s;
   return n;
 }
@@ -354,6 +358,7 @@ const Audio = {
   },
   full(){ this.tone(140, 140, 'sine', 0.3, 0, 90); this.noise(90, 700, 0.18); [1047, 1319, 1568, 2093].forEach((f, i) => this.tone(f, 140, 'triangle', 0.13, 80 + i * 60)); log('sound', 'chest.full'); },
   wrong(){ this.tone(170, 240, 'square', 0.1, 0, 85); this.noise(200, 500, 0.24); log('sound', 'wrong'); },
+  back(){ this.tone(120, 90, 'square', 0.09, 0, 80); this.noise(70, 900, 0.16); log('sound', 'back'); },
   lampOut(){ this.noise(320, 2600, 0.09, 140, 1, 250); log('sound', 'lamp.out'); },
   win(){ [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => { this.tone(f, 220, 'triangle', 0.18, i * 85); this.tone(f * 2, 120, 'sine', 0.05, i * 85 + 30); }); log('sound', 'win'); },
   lose(){ this.noise(1500, 240, 0.4, 0, 1, 50); this.tone(90, 1000, 'sawtooth', 0.07, 0, 40); log('sound', 'lose'); },
@@ -398,7 +403,7 @@ function goto(screen, payload){
       <li>Внизу гномы добывают камни. Тап по вагонетке — она едет вверх по рельсам к сундукам на поверхности.</li>
       <li>На развилке вагонетка едет по жёлтой стрелке и щёлкает её на другую сторону.</li>
       <li>Свет на рельсах — куда поедет каждая штольня: сплошной — в свой сундук, пунктир — в чужой.</li>
-      <li>Чужой сундук гасит фонарик, вагонетка возвращается в очередь. Три погасли — обвал.</li></ul>
+      <li>Чужой сундук не примет: вагонетка упрётся, откатится назад на своё место, а фонарик погаснет. Стрелки, что она проехала, останутся перещёлкнутыми. Три фонарика погасли — обвал.</li></ul>
       <button class="primary" data-act="menu">Понятно</button>`;
   if (screen === 'win'){
     const st = payload || 3, last = G.s && G.s.li >= LEVELS.length - 1;
@@ -452,14 +457,24 @@ function hud(){
 }
 
 // --- показанное состояние: ядро ушло вперёд, картинка ждёт, пока вагонетки доедут ---
-function shownLanterns(){ return G.s.lan + G.fly.filter(f => !f.ok && !f.arrivedAt).length; }
+function shownLanterns(){ return G.s.lan + G.fly.filter(f => !f.ok && !f.bumpAt).length; }
 function shownFill(id){ return G.s.fill[id] - G.fly.filter(f => f.ok && f.chest === id && !f.arrivedAt).length; }
-function hiddenBack(i){       // сколько вагонеток из чужих сундуков ещё не вернулись в очередь штольни i
-  const t = now();
-  return G.fly.filter(f => f.shaft === i && !f.ok && (!f.arrivedAt || t < f.arrivedAt + dur(CFG.BACK_MS))).length;
-}
-function shownQueue(i){ const q = G.s.q[i], k = Math.min(hiddenBack(i), q.length); return q.slice(0, q.length - k); }
+// Штольня занята: её первая вагонетка сейчас в пути к чужому сундуку или откатывается обратно (в ядре она уже снова первая).
+function busy(i){ return G.fly.some(f => f.shaft === i && !f.ok && !f.arrivedAt); }
+// Что можно отправить из штольни i прямо сейчас (занятая — ничего).
+function shownQueue(i){ return busy(i) ? '' : G.s.q[i]; }
 function swPending(id){ return G.fly.filter(f => f.nodes[id] !== undefined && !f.passed[id]).length; }
+// Путь, который сейчас ВИДЕН для первой вагонетки штольни i: по показанным стрелкам и показанному заполнению сундуков
+// (а не по ядру, где стрелки уже перещёлкнуты едущими вагонетками). unsure — путь идёт через стрелку, которую ещё
+// перещёлкнет едущая вагонетка: такой свет не рисуем до щелчка. Если unsure нет, показанные стрелки на пути совпадают
+// с ядром, значит и путь совпадает с тем, куда поедет вагонетка (честный прогон, не догадка).
+function shownRoute(i){
+  const q = shownQueue(i); if (!q.length) return null;
+  const L = G.s.L, path = []; let id = L.shafts[i].to, unsure = false;
+  while (L.sw[id]){ path.push(id); if (swPending(id)) unsure = true; id = L.sw[id].out[G.sw[id].vis]; }
+  const ch = L.chests[id];
+  return { path, chest: id, color: q[0], ok: ch.c === q[0] && shownFill(id) < ch.cap, unsure };
+}
 function playing(){ return G.s && G.screen === 'game' && !G.endAt && !isWin(G.s) && !isLose(G.s); }
 
 // --- ход игрока ---
@@ -474,7 +489,7 @@ function tapShaft(i){
   G.s = applyMove(G.s, i);
   log('input', 'tap', 'shaft=' + (i + 1) + ' color=' + v.color + ' to=' + v.chest + (v.ok ? ' ok' : ' wrong'));
   launch(i, v, t);
-  G.shift[i] = t;
+  if (v.ok) G.shift[i] = t;            // промах не сдвигает очередь: вагонетка вернётся на своё место
   Audio.press(); buzz(8);
   if (G.s.li === 0) $('hint').textContent = '';
 }
@@ -487,7 +502,8 @@ function launch(i, v, t){
     pts = pts.concat(k ? e.pts.slice(1) : e.pts);
   }
   const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y));
-  const f = { shaft: i, color: v.color, ok: v.ok, chest: v.chest, pts, cum, total: cum[cum.length - 1], nodes, t0: t, passed: {}, arrivedAt: 0, dustAt: CFG.DUST_PX };
+  const f = { shaft: i, color: v.color, ok: v.ok, chest: v.chest, pts, cum, total: cum[cum.length - 1], nodes, t0: t, passed: {}, arrivedAt: 0, bumpAt: 0, dustAt: CFG.DUST_PX };
+  f.end = f.ok ? f.total : f.total - CFG.STOP_PX;     // в чужой сундук не въезжает — упирается у знака «нельзя»
   G.fly.push(f);
   log('fx.start', 'roll', 'shaft=' + (i + 1));
   Audio.roll(f.total, 0);
@@ -499,7 +515,13 @@ function rollDist(tau){
   return tau < tv ? v0 * tau + a * tau * tau / 2 : v0 * tv + a * tv * tv / 2 + vm * (tau - tv);
 }
 function rollTime(d){ let lo = 0, hi = 10; for (let k = 0; k < 30; k++){ const m = (lo + hi) / 2; if (rollDist(m) < d) lo = m; else hi = m; } return hi / G.timeScale; }
-function flyDist(f, t){ return Math.min(f.total, rollDist(Math.max(0, (t - f.t0) / 1000 * G.timeScale))); }
+// Где вагонетка на пути (px от старта): вверх по закону толчка до f.end; после упора — откат вниз с разгоном до старта.
+function flyDist(f, t){
+  if (!f.bumpAt) return Math.min(f.end, rollDist(Math.max(0, (t - f.t0) / 1000 * G.timeScale)));
+  const tau = Math.max(0, (t - f.bumpAt) / 1000 * G.timeScale), a = CFG.BACK_ACC, vm = CFG.BACK_VMAX, tv = vm / a;
+  const back = tau < tv ? a * tau * tau / 2 : vm * tv / 2 + vm * (tau - tv);
+  return Math.max(0, f.end - back);
+}
 function poseAt(f, d){
   const c = f.cum; let k = 1; while (k < c.length - 1 && c[k] < d) k++;
   const a = f.pts[k - 1], b = f.pts[k], u = c[k] > c[k - 1] ? (d - c[k - 1]) / (c[k] - c[k - 1]) : 0;
@@ -516,15 +538,16 @@ function stepFlights(t){
       const n = G.geom.nodes[id], rnd = mulberry32(Math.floor(t) + id.charCodeAt(0));
       for (let k = 0; k < 7; k++){ const a = rnd() * Math.PI * 2, sp = 90 + rnd() * 120; G.parts.push({ kind: 'spark', x: n.x, y: n.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, g: 400, t0: t, life: 300 }); }
     }
-    while (f.dustAt < d){
+    while (!f.bumpAt && f.dustAt < d){
       const p = poseAt(f, f.dustAt), rnd = mulberry32(Math.floor(f.dustAt) + f.t0);
       G.parts.push({ kind: 'dust', x: p.x - Math.cos(p.ang) * 16, y: p.y - Math.sin(p.ang) * 16, vx: (rnd() - 0.5) * 30, vy: 10 + rnd() * 20, g: 0, t0: t, life: 420, r: 3 });
       f.dustAt += CFG.DUST_PX;
     }
-    if (d >= f.total){ f.arrivedAt = t; arrive(f, t); }
+    if (f.ok && d >= f.total){ f.arrivedAt = t; arrive(f, t); }
+    else if (!f.ok && !f.bumpAt && d >= f.end){ f.bumpAt = t; bump(f, t); }
+    else if (!f.ok && f.bumpAt && t > f.bumpAt && d <= 0){ f.arrivedAt = t; Audio.back(); log('fx.end', 'rollback', 'shaft=' + (f.shaft + 1)); log('event', 'cart.back', 'shaft=' + (f.shaft + 1)); }
   }
-  // убрать доехавших: правильных сразу, чужих — когда вернулись в очередь
-  G.fly = G.fly.filter(f => !f.arrivedAt || (!f.ok && t < f.arrivedAt + dur(CFG.BACK_MS)));
+  G.fly = G.fly.filter(f => !f.arrivedAt);
   // показанные стрелки: ядро XOR число вагонеток, которые ещё не проехали эту развилку
   for (const id in G.sw){
     const vis = G.s.bit[id] ^ (swPending(id) & 1), w = G.sw[id];
@@ -540,24 +563,30 @@ function word(x, y, text, col, t, big){ G.parts.push({ kind: 'word', x, y, vx: 0
 function arrive(f, t){
   const geo = geom(), c = geo.nodes[f.chest];
   log('fx.end', 'roll', 'shaft=' + (f.shaft + 1));
-  if (f.ok){
+  {
     G.bump[f.chest] = t;
     const k = shownFill(f.chest), cap = G.s.L.chests[f.chest].cap;
     Audio.gem(G.streak); G.streak++;
     const rnd = mulberry32(Math.floor(t));
     for (let n = 0; n < 6; n++) G.parts.push({ kind: 'gem', c: f.color, x: c.x + (rnd() - 0.5) * 16, y: geo.chestY + 6, vx: (rnd() - 0.5) * 70, vy: -160 - rnd() * 70, g: 1000, t0: t, life: 380 });
     for (let n = 0; n < 4; n++) G.parts.push({ kind: 'star', x: c.x + (rnd() - 0.5) * 56, y: geo.chestY + 10 + (rnd() - 0.5) * 30, vx: 0, vy: -20, g: 0, t0: t + n * 50, life: 380 });
-    if (k >= cap){ G.fullAt[f.chest] = t; Audio.full(); log('event', 'chest.full', f.chest); word(c.x, geo.chestY - 32, 'Полон!', PAL.lamp, t, true); buzz(15); }
-    else word(c.x, geo.chestY - 26, G.streak >= 7 ? 'Мастер!' : G.streak >= 5 ? 'Супер!' : G.streak >= 3 ? 'Отлично!' : '+1', '#ffffff', t, G.streak >= 3);
+    if (k >= cap){ G.fullAt[f.chest] = t; Audio.full(); log('event', 'chest.full', f.chest); word(c.x, geo.chestY + GEO.CHEST_H + 22, 'Полон!', PAL.lamp, t, true); buzz(15); }
+    else word(c.x, geo.chestY + GEO.CHEST_H + 22, G.streak >= 7 ? 'Мастер!' : G.streak >= 5 ? 'Супер!' : G.streak >= 3 ? 'Отлично!' : '+1', '#ffffff', t, G.streak >= 3);
     log('event', 'cart.ok', f.color + '→' + f.chest + ' streak=' + G.streak);
-  } else {
+  }
+}
+// Упор у чужого сундука: сундук не принимает — тряска, «нельзя», гаснет фонарик; дальше вагонетка откатывается назад.
+function bump(f, t){
+  const geo = geom(), c = geo.nodes[f.chest], p = poseAt(f, f.end);
+  log('fx.start', 'rollback', 'shaft=' + (f.shaft + 1));
+  {
     G.streak = 0;
     G.shake[f.chest] = t + dur(CFG.SHAKE_MS);
-    Audio.wrong(); Audio.lampOut(); buzz([30, 30, 30]);
+    Audio.wrong(); Audio.lampOut(); Audio.roll(f.end * 0.6, 120); buzz([30, 30, 30]);
     const full = shownFill(f.chest) >= G.s.L.chests[f.chest].cap && G.s.L.chests[f.chest].c === f.color;
-    word(c.x, geo.chestY - 26, full ? 'Уже полон!' : 'Не тот сундук!', PAL.bad, t, false);
+    word(Math.min(VW - 60, Math.max(60, p.x)), p.y + 30, full ? 'Уже полон!' : 'Не тот сундук!', PAL.bad, t, false);   // у места упора, не у верхнего края
     const rnd = mulberry32(Math.floor(t) + 7);
-    for (let n = 0; n < 8; n++) G.parts.push({ kind: 'dust', x: c.x + (rnd() - 0.5) * 30, y: c.y, vx: (rnd() - 0.5) * 140, vy: -50 - rnd() * 60, g: 120, t0: t, life: 520, r: 5 });
+    for (let n = 0; n < 8; n++) G.parts.push({ kind: 'dust', x: p.x + (rnd() - 0.5) * 20, y: p.y - 8, vx: (rnd() - 0.5) * 140, vy: -50 - rnd() * 60, g: 120, t0: t, life: 520, r: 5 });
     log('event', 'cart.wrong', f.color + '→' + f.chest);
     const idx = shownLanterns();
     log('event', 'lantern.out', 'left=' + idx);
@@ -872,15 +901,14 @@ function drawStar(c, x, y, r, a){
   c.moveTo(x, y - r); c.quadraticCurveTo(x, y, x + r, y); c.quadraticCurveTo(x, y, x, y + r); c.quadraticCurveTo(x, y, x - r, y); c.quadraticCurveTo(x, y, x, y - r);
   c.fill(); c.restore();
 }
-// Свет на рельсах: куда сейчас поедет первая вагонетка каждой штольни (честный прогон ядра, verdict()).
+// Свет на рельсах: куда поедет первая вагонетка каждой штольни — по тому, что видно (shownRoute), меняется в момент щелчка стрелки.
 // Верный путь — яркий, с ореолом и бегущими вверх шевронами, а его сундук обведён светом.
 // Чужой путь — тонкий тусклый пунктир, обрывается красным знаком «нельзя» на рельсе под сундуком (не на сундуке).
 function drawRouteLights(geo, t){
   if (!playing()) return;
   const pulse = 0.82 + 0.18 * Math.sin(t / 220);
   G.s.L.shafts.forEach((s, i) => {
-    if (!shownQueue(i).length) return;
-    const v = verdict(G.s, i); if (!v) return;
+    const v = shownRoute(i); if (!v || v.unsure) return;
     const ids = ['S' + i, ...v.path, v.chest];
     let pts = [];
     for (let k = 0; k + 1 < ids.length; k++){ const e = geo.edges[ids[k] + '>' + ids[k + 1]]; pts = pts.concat(k ? e.pts.slice(1) : e.pts); }
@@ -964,10 +992,29 @@ function drawChestAt(geo, id, t){
   const lid = fill >= ch.cap ? Math.max(0, 1 - (t - (G.fullAt[id] || -1e9)) / dur(CFG.LID_MS)) : 1;
   const glow = G.winAt ? 0.5 + 0.5 * Math.sin((t - G.winAt) / 120) : 0;
   drawChest(ctx, n.x + dx, geo.chestY, ch.c, fill, ch.cap, lid, k, glow, red);
+  const pu = G.bump[id] ? (t - G.bump[id]) / dur(300) : 1;
+  drawNeedBadge(ctx, n.x + dx, geo.chestY - 36, ch.c, ch.cap - fill, pu >= 0 && pu < 1 ? 1 + 0.35 * Math.sin(pu * Math.PI) : 1);
+}
+// Табличка над сундуком: сколько ещё вагонеток нужно (обратный отсчёт) и камень какого цвета.
+// Полный сундук — зелёный кружок с галочкой. sc — масштаб «подпрыгивания» при попадании.
+function drawNeedBadge(c, x, y, col, need, sc){
+  c.save(); c.translate(x, y); c.scale(sc, sc);
+  if (need > 0){
+    c.fillStyle = PAL.outline; c.beginPath(); c.roundRect(-25, -14, 50, 28, 14); c.fill();
+    c.fillStyle = '#fffaf0'; c.beginPath(); c.roundRect(-23, -12, 46, 24, 12); c.fill();
+    drawGem(c, -10, 0, 7, col, 1);
+    c.fillStyle = PAL.outline; c.font = '900 19px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(need), 10, 1);
+  } else {
+    c.fillStyle = PAL.outline; c.beginPath(); c.arc(0, 0, 14, 0, 7); c.fill();
+    c.fillStyle = PAL.ok; c.beginPath(); c.arc(0, 0, 12, 0, 7); c.fill();
+    c.strokeStyle = '#fff'; c.lineWidth = 3.2; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath(); c.moveTo(-5.5, 0); c.lineTo(-1.5, 4); c.lineTo(6, -4.5); c.stroke();
+  }
+  c.restore();
 }
 // Сундук: крупный дощатый ящик. Почти вся передняя стенка — цвет его камней, на ней белый медальон с формой камня
 // (форма дублирует цвет); снизу на тёмной планке — ячейки вместимости (заполненные — с камнем).
-// Открыт, пока не полон: откинутая крышка позади, внутри видны камни. Полон — крышка закрыта, зелёный значок с галочкой.
+// Открыт, пока не полон: откинутая крышка позади, внутри видны камни. Полон — крышка закрыта (галочка — на табличке над ним).
 // lid 1..0 — открытость, k — масштаб «подпрыгивания», glow — сияние победы, red — вспышка промаха.
 function drawChest(c, x, y, col, fill, cap, lid, k, glow, red){
   const w = GEO.CHEST_W, h = GEO.CHEST_H, ol = PAL.outline, base = GEM(col);
@@ -994,12 +1041,12 @@ function drawChest(c, x, y, col, fill, cap, lid, k, glow, red){
   c.fillStyle = '#fffaf0'; c.beginPath(); c.arc(x, y + 19, 10.3, 0, 7); c.fill();
   drawGem(c, x, y + 19, 7, col, 1);
   // планка вместимости
-  c.fillStyle = 'rgba(30,15,6,.9)'; c.beginPath(); c.roundRect(x - w / 2 + 4, y + 36, w - 8, 13, 4); c.fill();
-  const cell = Math.min(11, (w - 14 - (cap - 1) * 2.5) / cap), gap = 2.5, tw = cap * cell + (cap - 1) * gap;
+  c.fillStyle = 'rgba(30,15,6,.9)'; c.beginPath(); c.roundRect(x - w / 2 + 3, y + 35, w - 6, 15, 4); c.fill();
+  const gap = 2, cell = Math.min(13, (w - 10 - (cap - 1) * gap) / cap), tw = cap * cell + (cap - 1) * gap;
   for (let n = 0; n < cap; n++){
     const cx = x - tw / 2 + n * (cell + gap) + cell / 2, cy = y + 42.5;
-    c.fillStyle = n < fill ? shade(base, -0.45) : '#4a3324'; c.beginPath(); c.roundRect(cx - cell / 2, cy - 4.5, cell, 9, 2.5); c.fill();
-    if (n < fill) drawGem(c, cx, cy, 3.6, col, 1);
+    c.fillStyle = n < fill ? base : '#5a4030'; c.beginPath(); c.roundRect(cx - cell / 2, cy - 5.5, cell, 11, 3); c.fill();
+    if (n < fill){ c.strokeStyle = PAL.outline; c.lineWidth = 1.2; c.stroke(); c.fillStyle = 'rgba(255,255,255,.55)'; c.fillRect(cx - cell / 2 + 2, cy - 4, cell - 4, 2); }
   }
   // закрытая крышка
   if (lid < 0.99){
@@ -1010,13 +1057,6 @@ function drawChest(c, x, y, col, fill, cap, lid, k, glow, red){
   }
   if (red > 0){ c.fillStyle = 'rgba(255,60,60,' + (0.5 * red).toFixed(3) + ')'; c.beginPath(); c.roundRect(x - w / 2, y + 1, w, h - 1, 5); c.fill(); }
   c.restore();
-  if (fill >= cap && lid < 0.5){
-    const bx = x + w / 2 - 4, by = y - 8;
-    c.fillStyle = ol; c.beginPath(); c.arc(bx, by, 12, 0, 7); c.fill();
-    c.fillStyle = PAL.ok; c.beginPath(); c.arc(bx, by, 10, 0, 7); c.fill();
-    c.strokeStyle = '#fff'; c.lineWidth = 3; c.lineCap = 'round'; c.lineJoin = 'round';
-    c.beginPath(); c.moveTo(bx - 5, by); c.lineTo(bx - 1.5, by + 3.5); c.lineTo(bx + 5, by - 4); c.stroke();
-  }
 }
 // Вагонетка: кузов-трапеция с оковкой и заклёпками, колёса со спицами (wa — угол поворота колёс),
 // горка гранёных камней цвета груза. ang — наклон на спуске, k — масштаб.
@@ -1095,13 +1135,13 @@ function depotSlot(geo, i, k){ return { x: geo.shafts[i].x, y: geo.depotTop + 30
 // Тапаешь по самой вагонетке — гном толкает её вверх по рельсам этой штольни. Подсказки на вагонетках нет: подсказка одна — свет на рельсах.
 function drawDepot(geo, t){
   G.s.L.shafts.forEach((s, i) => {
-    const q = shownQueue(i), sx = geo.shafts[i].x, top = geo.depotTop;
+    const q = G.s.q[i], away = busy(i) ? 1 : 0, sx = geo.shafts[i].x, top = geo.depotTop;   // away — первая в пути, её место пустует
     // очередь: при отправке стопка подъезжает вверх на место ушедшей
     const u = Math.max(0, Math.min(1, (t - G.shift[i]) / dur(220))), off = (1 - (1 - Math.pow(1 - u, 2))) * GEO.DQSTEP;
     const show = Math.min(q.length, CFG.QUEUE_SHOW);
     // первая — «на старте»: крупнее, на освещённом пятачке; остальные — мельче и тусклее
-    if (q.length && playing()){ const p = depotSlot(geo, i, 0); ctx.fillStyle = 'rgba(255,216,107,.28)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 4, 30, 17, 0, 0, 7); ctx.fill(); }
-    for (let k = show - 1; k >= 0; k--){
+    if (q.length && !away && playing()){ const p = depotSlot(geo, i, 0); ctx.fillStyle = 'rgba(255,216,107,.28)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 4, 30, 17, 0, 0, 7); ctx.fill(); }
+    for (let k = show - 1; k >= away; k--){
       const p = depotSlot(geo, i, k);
       ctx.globalAlpha = k ? 0.85 : 1; drawCart(ctx, p.x, p.y + (k ? off * 0.9 : off), q[k], 0, k === 0 ? 1.12 : 0.74, 0); ctx.globalAlpha = 1;
     }
@@ -1139,7 +1179,7 @@ function drawParts(t){
 }
 // Рука-подсказка на первых уровнях: кольцо вокруг первой вагонетки в депо той штольни, чей свет ведёт в свой сундук.
 function drawHand(geo, t){
-  const i = G.s.L.shafts.findIndex((_, k) => shownQueue(k).length && verdict(G.s, k).ok);
+  const i = G.s.L.shafts.findIndex((_, k) => { const r = shownRoute(k); return r && !r.unsure && r.ok; });
   if (i < 0) return;
   const p = depotSlot(geo, i, 0), ph = Math.sin(t / 200), r = 26 + 3 * ph;
   ctx.save();
@@ -1163,7 +1203,7 @@ window.GNOMYA_GORKA = {
     if (!G.s) return { screen: G.screen };
     const v = G.s.L.shafts.map((_, i) => { const r = verdict(G.s, i); return r ? (r.ok ? 'green' : 'red') : 'empty'; });
     return { level: G.s.li + 1, queues: G.s.q.slice(), bits: { ...G.s.bit }, fill: { ...G.s.fill }, lanterns: G.s.lan, moves: G.s.moves,
-      lights: v, flying: G.fly.length, streak: G.streak, win: isWin(G.s), lose: isLose(G.s), screen: G.screen };
+      lights: v, shown: G.s.L.shafts.map((_, i) => { const r = shownRoute(i); return !r ? 'empty' : r.unsure ? 'wait' : r.ok ? 'green' : 'red'; }), flying: G.fly.length, streak: G.streak, win: isWin(G.s), lose: isLose(G.s), screen: G.screen };
   },
   play(n){ startLevel(Math.max(0, Math.min(LEVELS.length, n || 1) - 1)); return this.state(); },
   tap(i){ G.lastTap[i] = -1e9; tapShaft(i); return this.state(); },
